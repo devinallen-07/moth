@@ -1,25 +1,88 @@
 import pyaudio
+import datetime
+import math
+import struct
 import wave
+import time
+import os
 
-audio = pyaudio.PyAudio()
+Threshold = 10
 
-moth = audio.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
+SHORT_NORMALIZE = (1.0/32768.0)
+chunk = 1024
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 16000
+swidth = 2
 
-frames = []
+TIMEOUT_LENGTH = 5
 
-try: 
-    while True:
-        data = moth.read(1024)
-        frames.append(data)
-except KeyboardInterrupt:
-    pass
+#f_name_directory = r'C:\Users\\PyCharmProjects\AutoRecorder\records'
 
-moth.stop_stream()
-moth.close()
-audio.terminate()
+class Recorder:
 
-sound_file = wave.open("moth-hearing.wav","wb")
-sound_file.setnchannels(1)
-sound_file.setsampwidth(audio.get_sample_size(pyaudio.paInt16))
-sound_file.setframerate(44100)
-sound_file.writeframes(b''.join(frames))
+    @staticmethod
+    def rms(frame):
+        count = len(frame) / swidth
+        format = "%dh" % (count)
+        shorts = struct.unpack(format, frame)
+
+        sum_squares = 0.0
+        for sample in shorts:
+            n = sample * SHORT_NORMALIZE
+            sum_squares += n * n
+        rms = math.pow(sum_squares / count, 0.5)
+
+        return rms * 1000
+
+    def __init__(self):
+        self.p = pyaudio.PyAudio()
+        self.stream = self.p.open(format=FORMAT,
+                                  channels=CHANNELS,
+                                  rate=RATE,
+                                  input=True,
+                                  output=True,
+                                  frames_per_buffer=chunk)
+
+    def record(self):
+        print('Noise detected, recording beginning')
+        rec = []
+        current = time.time()
+        end = time.time() + TIMEOUT_LENGTH
+
+        while current <= end:
+
+            data = self.stream.read(chunk)
+            if self.rms(data) >= Threshold: end = time.time() + TIMEOUT_LENGTH
+
+            current = time.time()
+            rec.append(data)
+        self.write(b''.join(rec))
+
+    def write(self, recording):
+        #n_files = len(os.listdir(f_name_directory))
+
+        filename = f"moth-hearing-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.wav","wb"
+
+        wf = wave.open(filename, 'wb')
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(self.p.get_sample_size(FORMAT))
+        wf.setframerate(RATE)
+        wf.writeframes(recording)
+        wf.close()
+        print('Written to file: {}'.format(filename))
+        print('Returning to listening')
+
+
+
+    def listen(self):
+        print('Listening beginning')
+        while True:
+            input = self.stream.read(chunk)
+            rms_val = self.rms(input)
+            if rms_val > Threshold:
+                self.record()
+
+a = Recorder()
+
+a.listen()
